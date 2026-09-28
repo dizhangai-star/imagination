@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{{TITLE}}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Noto+Serif+TC:wght@400;700&display=block" rel="stylesheet">
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas{display:block;width:100vw;height:auto}</style>
+<script type="importmap">
+{ "imports": {
+  "three": "{{KIT}}/node_modules/three/build/three.module.js",
+  "three/addons/": "{{KIT}}/node_modules/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="cv" width="1920" height="1080"></canvas>
+<script src="{{KIT}}/engine/core.js"></script>
+<script src="{{KIT}}/styles/cg-lab/style.js"></script>
+<script src="{{KIT}}/engine/runtime.js"></script>
+<script src="timeline.js"></script>
+<script type="module">
+// cg-lab engine for "{{TITLE}}". Primitives: {{KIT}}/styles/cg-lab/STYLE.md.
+// Contract: window.renderAt(t) is a pure function of t (CLIP.setup builds once, CLIP.draw sets everything from t).
+import * as THREE from 'three';
+import { MarchingCubes } from 'three/addons/objects/MarchingCubes.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+
+const { cl, lerp, seg, eOut, eIn, eInOut, R } = Kit.math;
+const x = document.getElementById('cv').getContext('2d');
+const S = Kit.styles.cgLab(x, { THREE });
+const { scene, cam, renderer, studio, lights, orbit, text, caption, alphaIn, EN, ZH, MONO, BAR } = S;
+
+const E = { THREE, MarchingCubes, mergeGeometries, mergeVertices, scene, cam, renderer, x, cl, lerp, seg, eOut, eIn, eInOut, R,
+  studio, lights, orbit, text, caption, alphaIn, EN, ZH, MONO, BAR };
+window.E = E;
+
+window.renderAt = (t) => { const A = window.CLIP; S.frame(A, t, window.TIMELINE(A), E); };
+
+Kit.boot({ dir: 'clips', global: 'CLIP', param: 'clip', fallback: '00-title', ...S.boot });
+</script>
+</body>
+</html>

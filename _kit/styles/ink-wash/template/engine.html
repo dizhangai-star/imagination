@@ -1,0 +1,66 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{{TITLE}}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=LXGW+WenKai+TC:wght@400;700&family=Noto+Serif+TC:wght@400;500&display=block" rel="stylesheet">
+<style>html,body{margin:0;background:#efe6d2;overflow:hidden}canvas{display:block;width:100vw;height:auto}</style>
+</head>
+<body>
+<canvas id="cv" width="1920" height="1080"></canvas>
+<script src="{{KIT}}/engine/core.js"></script>
+<script src="{{KIT}}/styles/ink-wash/style.js"></script>
+<script src="{{KIT}}/engine/runtime.js"></script>
+<script src="timeline.js"></script>
+<script>
+// Ink-wash engine for "{{TITLE}}". Primitives: {{KIT}}/styles/ink-wash/STYLE.md.
+// Everything is drawn in 640×360 logical units and scaled ×3 to 1080p.
+// Contract: window.renderAt(t) draws the frame at time t (0 – timing.fade[1]), deterministically.
+const ZH = '"LXGW WenKai TC", serif', EN = '"Noto Serif TC", serif';
+const INK = '#161614', PAPER = '#efe6d2', SEAL = '#b8322a';
+const cv = document.getElementById('cv'), x = cv.getContext('2d');
+x.setTransform(3, 0, 0, 3, 0, 0);
+const S = Kit.styles.inkWash(x, { INK, PAPER, SEAL, ZH, sealText: '{{SEAL}}' });
+const { cl, seg, ez, R, spline, loop, circle, taper, brush, ribbon, wash, ground, rock, mass, blob, moon, paper, vtext, seal, textLine } = S;
+
+// Overlays: vertical title (left column), narration subtitle (top band), seal. Timing from timeline.js.
+function overlays(A, t) {
+  const T = window.TIMELINE(A), tx = A.titleX ?? 80;
+  if (A.title) vtext(A.title, tx, 54, 46, seg(t, T.title[0], T.title[1]));
+  if (A.en) textLine(A.en, tx, 54 + [...(A.title ?? '')].length * 50 + 12, `12px ${EN}`, '#3a3a36', seg(t, T.title[1] - 0.6, T.title[1] + 0.2));
+  if (A.narration) {
+    const sa = seg(t, T.sub[0], T.sub[0] + 0.5) * (1 - seg(t, T.sub[1] - 0.4, T.sub[1]));
+    textLine(A.narration.zh, 320, 26, `13px ${ZH}`, '#2a2a26', sa);
+    textLine(A.narration.en, 320, 42, `italic 10.5px ${EN}`, '#3a3a36', sa);
+  }
+  seal(tx, 54 + [...(A.title ?? '')].length * 50 + 40, seg(t, T.seal, T.seal + 0.4));
+}
+function fadeOut(A, t) {
+  const T = window.TIMELINE(A), fo = seg(t, T.fade[0], T.fade[1]);
+  if (fo) { x.globalAlpha = fo; x.fillStyle = PAPER; x.fillRect(0, 0, 640, 360); x.globalAlpha = 1; }
+}
+
+const E = { x, cl, seg, ez, R, spline, loop, circle, taper, brush, ribbon, wash, ground, rock, mass, blob, moon, vtext, textLine, seal, ZH, EN, INK, SEAL, PAPER };
+
+// CLIP.overlays = false: the clip draws all its own text; only the fade is kept.
+window.renderAt = (t) => {
+  const A = window.CLIP;
+  paper();
+  A.draw(t, E, window.TIMELINE(A));
+  if (A.overlays !== false) overlays(A, t);
+  fadeOut(A, t);
+};
+
+Kit.boot({
+  dir: 'clips', global: 'CLIP', param: 'clip', fallback: '00-title',
+  zhText: (A) => (A.title ?? '') + (A.narration?.zh ?? '') + (A.glyphs ?? '') + '{{SEAL}}',
+  fonts: (A, zh) => {
+    const en = (A.en ?? '') + (A.narration?.en ?? '') + (A.glyphsEn ?? '');
+    return [[`700 46px ${ZH}`, zh], [`400 13px ${ZH}`, zh], [`12px ${EN}`, en], [`italic 12px ${EN}`, en], [`italic 10.5px ${EN}`, en]];
+  },
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+node_modules/
+.DS_Store
+.claude/settings.local.json
+# rendered output and review frames (regenerate with render.mjs / compile.mjs / preview.mjs)
+*/out/
+*/frames/
+*/audio/build/
+*/audio/samples/

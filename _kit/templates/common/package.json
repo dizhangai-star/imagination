@@ -1,0 +1,7 @@
+{
+  "name": "{{NAME}}",
+  "version": "1.0.0",
+  "private": true,
+  "description": "{{TITLE}} — drawn in code with the video kit ({{STYLE}})",
+  "type": "module"
+}

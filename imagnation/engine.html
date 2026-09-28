@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Megalophobia · 巨物</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Noto+Serif+SC:wght@400;700&display=block" rel="stylesheet">
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas{display:block;width:100vw;height:auto}</style>
+<script type="importmap">
+{ "imports": {
+  "three": "../_kit/node_modules/three/build/three.module.js",
+  "three/addons/": "../_kit/node_modules/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="cv" width="1920" height="1080"></canvas>
+<script src="../_kit/engine/core.js"></script>
+<script src="../_kit/styles/cg-lab/style.js"></script>
+<script src="../_kit/engine/runtime.js"></script>
+<script src="timeline.js"></script>
+<script type="module">
+// cg-lab engine for "Megalophobia · 巨物". Primitives: ../_kit/styles/cg-lab/STYLE.md.
+// Contract: window.renderAt(t) is a pure function of t (CLIP.setup builds once, CLIP.draw sets everything from t).
+import * as THREE from 'three';
+import { Water } from 'three/addons/objects/Water.js';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+
+const { cl, lerp, seg, eOut, eIn, eInOut, R } = Kit.math;
+const x = document.getElementById('cv').getContext('2d');
+const S = Kit.styles.cgLab(x, { THREE, ZH: '"Noto Serif SC", serif', hdr: true, fps: 30, shutter: 0.5 });
+S.boot.cjkFamily = 'Noto Serif SC';
+const { scene, cam, renderer, studio, lights, orbit, text, caption, alphaIn, EN, ZH, MONO, BAR } = S;
+
+const E = { THREE, Water, Sky, mergeGeometries, mergeVertices, scene, cam, renderer, x, cl, lerp, seg, eOut, eIn, eInOut, R,
+  studio, lights, orbit, text, caption, alphaIn, EN, ZH, MONO, BAR };
+window.E = E;
+
+window.renderAt = (t) => { const A = window.CLIP; S.frame(A, t, window.TIMELINE(A), E); };
+
+Kit.boot({ dir: 'clips', global: 'CLIP', param: 'clip', fallback: '01-shore', ...S.boot });
+</script>
+</body>
+</html>

@@ -1,0 +1,62 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{{TITLE}}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=LXGW+WenKai+TC:wght@400;700&family=Fraunces:ital,opsz,wght@0,9..144,600;0,9..144,900;1,9..144,500&display=block" rel="stylesheet">
+<style>html,body{margin:0;background:#efe3cc;overflow:hidden}canvas{display:block;width:100vw;height:auto}</style>
+</head>
+<body>
+<canvas id="cv" width="1920" height="1080"></canvas>
+<script src="{{KIT}}/engine/core.js"></script>
+<script src="{{KIT}}/styles/paper-cut/style.js"></script>
+<script src="{{KIT}}/engine/runtime.js"></script>
+<script src="timeline.js"></script>
+<script>
+// Paper-cut engine for "{{TITLE}}". Primitives: {{KIT}}/styles/paper-cut/STYLE.md.
+// Everything is drawn in 640×360 logical units and scaled ×3 to 1080p.
+// Contract: window.renderAt(t) draws the frame at time t (0 – CLIP.duration), deterministically.
+const ZH = '"LXGW WenKai TC", serif', EN = '"Fraunces", Georgia, serif';
+const PAL = {
+  board: '#efe3cc', cream: '#f6ecd8', kraft: '#d8c7a6', navy: '#2b2d5c', terra: '#c24f39', red: '#d8402f',
+  pink: '#f2a7b5', rose: '#e27d93', blush: '#f6c9cf', sage: '#9dbb9f', leaf: '#5f8f6a', moss: '#3f6b54',
+  sky: '#bcd9dc', dusk: '#f3c9a8', sun: '#f4c06a', gold: '#e9a93c', night: '#23254a', skin: '#f3cfb3',
+  hair: '#3a2a26', ink: '#2a2230', white: '#fbf6ec', wood: '#b07a52',
+};
+const cv = document.getElementById('cv'), x = cv.getContext('2d');
+const K = 3;                                   // logical → device scale
+const { cl, lerp, seg, ez, eOut, eIn, eInOut, eBack, R, shade, mixHex } = Kit.math;
+const S = Kit.styles.paperCut(x, { PAL, ZH, EN, K });
+const { loop, strip, P, piece, mark, thread, at, texture, light, rise, sink, pop, hang, board, sky, vignette, paperText, confetti, banner, fadeBoard } = S;
+
+const E = {
+  x, K, PAL, ZH, EN, cl, lerp, seg, ez, eOut, eIn, eInOut, eBack, R, shade, mixHex, loop, strip, P,
+  piece, mark, thread, at, texture, light, rise, sink, pop, hang, board, sky, vignette, paperText, confetti, banner,
+  get LIGHT() { return S.LIGHT; },
+};
+
+// CLIP.overlays = false: no caption banner. CLIP.vignette = false: no box falloff.
+window.renderAt = (t) => {
+  const A = window.CLIP, T = window.TIMELINE(A);
+  x.setTransform(K, 0, 0, K, 0, 0); x.globalAlpha = 1; x.filter = 'none'; x.globalCompositeOperation = 'source-over';
+  light();
+  board();
+  A.draw(t, E, T);
+  if (A.vignette !== false) vignette();
+  if (A.overlays !== false) banner(t, A.captions, T);
+  fadeBoard(Math.max(1 - seg(t, T.fadeIn[0], T.fadeIn[1]), seg(t, T.fade[0], T.fade[1])));
+};
+
+Kit.boot({
+  dir: 'clips', global: 'CLIP', param: 'clip', fallback: '00-title',
+  zhText: (A) => (A.captions?.zh ?? '') + (A.glyphs ?? ''),
+  fonts: (A, zh) => {
+    const en = (A.captions?.en ?? '') + (A.glyphsEn ?? '');
+    return [[`700 17px ${ZH}`, zh], [`400 17px ${ZH}`, zh], [`900 20px ${EN}`, en], [`600 20px ${EN}`, en], [`italic 500 11.5px ${EN}`, en]];
+  },
+});
+</script>
+</body>
+</html>
