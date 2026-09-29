@@ -92,6 +92,31 @@ The template's `E` also carries `MarchingCubes`, `mergeGeometries`, `mergeVertic
   GPU passes inside `draw` (FFT, bakes) must save/restore `renderer.getRenderTarget()`. Cost on imagnation (FFT ocean + 1080p mirror):
   16 sub-frames ≈ 2.7 s/frame vs 0.23 s at 1 sample (~12×): a 7 s clip renders in ~10 min. Preview at 1 sample.
 
+### Learned on imagnation (landscape: FFT ocean, sky, planet, 1 km water wall)
+- **World-scale coordinates** (km): float hashes and `fract(sin())` go blocky/speckled — use integer PCG hashes and
+  wrap cell indices (`mod(p, 289.)`). Fade every noise octave by its pixel footprint (`fwidth(p) × frequency`) or far
+  terrain/sea aliases into wiry lines; normal maps average to flat past ~200 m, so far breakup needs explicit fbm.
+- **Detail in metres, never in normalized fractions** (`h / H`): a growing object then stretches its texture and reads
+  as a painted surface. Metric detail grows naturally with approach. Add aerial perspective (`exp(−d / L)` toward the
+  horizon sky in the view direction) or distant giants look pasted on.
+- Baked textures (equirect albedo): render once, read back, upload as a mipmapped `DataTexture` — render-target mips
+  are never built (minification speckle). Keep bake noise below texel Nyquist.
+- Preetham `Sky` under ACES: turbidity ~1.5, rayleigh ~2, or it goes green/brown; cancel leftover tint in `overlay`
+  with a multiply wash.
+- Planar mirrors (Water.js): the mirror pass renders **nested inside** the main render — per-camera switches go in the
+  object's own `onBeforeRender`; camera-dependent uniforms (tan(fov/2), aspect, view-span) are set per render from the
+  camera actually used, not in `draw` (clips set the camera after updating the world → one-frame lag on zooms).
+- Glassy sea: a JONSWAP spectrum's slope variance is ~0.017 even in light air — damp high k (`exp(−(k/d)²)`) or the
+  mirror smears and reflections of bright bodies vanish.
+- Raymarched volumes at 16 samples: guard the output against NaN/Inf (`discard`) — one bad sub-frame blanks the frame.
+- A clip that hard-cuts to black before its end: define `window.DURATION(A) = A.duration` in `timeline.js`, or the
+  kit ends the clip at its fade end and the film shortens.
+- Audio: clamp every envelope base to ≥ 0 before `**` (a cue's first sample can be slightly before t → NaN poisons the
+  bus). Two detuned voices on a held note beat audibly; one voice for drones. Review without listening:
+  `BUS=1 node audio/music.mjs` + ffmpeg `showspectrumpic`.
+- Poster: take it from the finished film (`ffmpeg -ss <film s> -i out/<film>.mp4 -frames:v 1 out/poster.png`) —
+  `preview.mjs` stamps a time label on every cell.
+
 ## 6. Sound
 Epic hybrid, all synthesized in `audio/music.mjs` (`soundtrack: 'film'`): subtractive `syn` voices (detuned
 PolyBLEP saws through an SVF low-pass), pads, brass, strings, taiko/timpani/boom hits, risers, braams, a tape
@@ -105,3 +130,5 @@ blast), not sine partials. The reference film's score (`vfx-creature/audio/music
 `vfx-creature`: a code-built ape (SDF → surface nets, skinned, fur shells, blend-shape grin) through a VFX
 pipeline, ending on a "Dawn of Man" homage with a twist. Film-specific helpers stay in the film (`_ape.js`,
 `_props.js`, `_shots.js`: poses/keys/IK, props, debris, glare, glass shatter); copy what a new film needs.
+`imagnation` (Megalophobia): landscape reference — `clips/_ocean.js` (Tessendorf FFT ocean, GPU IFFT) and
+`clips/_world.js` (sky, sand + swash, planet bake, tidal wall mesh, raymarched spray, physics readout).
