@@ -153,40 +153,147 @@
     g.computeBoundingSphere(); return g;
   }
 
-  // sea surface height above the still level (world xz, t): swash surge near shore + the tidal ridge far out
-  // (uniforms uT uSurge uLevel uSlope uRidge are declared by each shader)
+  // sea surface height above the still level (world xz, t): swash surge near shore (the tidal ridge is its own mesh,
+  // makeWall; uniforms uT uSurge are declared by each shader)
   const SURFACE = /* glsl */`
     float surf(vec2 w){
-      float sw = uSurge * (0.55*sin(uT*0.9 + w.y*0.05 + 0.3*sin(w.x*0.021)) + 0.45*sin(uT*1.37 + w.x*0.013 + w.y*0.03 + 1.7));
-      float rw = w.y > uRidge.x ? uRidge.z : uRidge.z * 4.;           // steep front (shoreward), long back
-      float ridge = uRidge.y * exp(-pow((w.y - uRidge.x) / rw, 2.)) * (0.85 + 0.15*sin(w.x*0.0007 + 1.3))
-                  * (1. + 0.05*sin(w.x*0.0041 + 0.7) + 0.035*sin(w.x*0.0093 + 2.1*sin(w.x*0.0023)) + 0.02*sin(w.x*0.017 + 1.));
-      return sw + ridge;
+      return uSurge * (0.55*sin(uT*0.9 + w.y*0.05 + 0.3*sin(w.x*0.021)) + 0.45*sin(uT*1.37 + w.x*0.013 + w.y*0.03 + 1.7));
+    }`;
+  // the ridge's height along the shore (× uRidge.y): long swells of the crest line
+  const RIDGE = /* glsl */`
+    float ridgeAlong(float x){
+      return (0.85 + 0.15*sin(x*0.0007 + 1.3)) * (1. + 0.05*sin(x*0.0041 + 0.7) + 0.035*sin(x*0.0093 + 2.1*sin(x*0.0023)) + 0.02*sin(x*0.017 + 1.));
     }`;
 
-  // the tidal wall's face at (x, height fraction hN): water pouring down (phase = height + t), marbled foam lace,
-  // light through the thinning lip, sky sheen, whitewater churn at the foot. Used for the wall AND its reflection.
+  // the tidal wall's face, shaded as water (used for the wall AND its reflection in the sea):
+  // relief of the sheet pouring down the face in METRES (x along the ridge, v = height above level + flow·t), so detail
+  // keeps its size as the wall grows and fades out by pixel footprint with range; Fresnel reflection of the sky
+  // (uSkyCube) off the relief normal over a dark lit body; light through the thin lip; foam as a lit rough layer;
+  // aerial perspective (Beer–Lambert toward the horizon sky in the view direction).
   const FACE = /* glsl */`
-    vec3 faceShade(float xs, float hN, float det, out float foamOut){   // det: 1 = wall, 0 = soft (blurred reflection)
-      float f1 = fbm(vec2(xs*0.012, hN*0.9 + uT*0.45));
-      float f2 = fbm(vec2(xs*0.05, hN*1.6 + uT*0.9) + 3.1);
-      float f3 = mix(0.5, fbm(vec2(xs*0.16, hN*3.2 + uT*1.5) + 7.7), det);
-      float lace = (1. - smoothstep(0.0, 0.07, abs(fbm(vec2(xs*0.022, hN*3. + uT*0.7) + f1*1.4) - 0.5))) * smoothstep(0.4, 0.7, f2) * det;
-      float sheets = pow(smoothstep(0.5, 0.85, f2), 1.5) * (0.5 + f1);
-      vec3 deep = vec3(0.015, 0.027, 0.034), mid = vec3(0.026, 0.052, 0.058);
-      vec3 col = mix(deep, mid, smoothstep(0.1, 0.8, hN)) * (0.75 + 0.6*f1);
-      float thin = smoothstep(0.5, 0.96, hN);
-      col += vec3(0.03, 0.105, 0.095) * thin * (0.45 + 0.9*f2);                       // light through the lip
-      col += vec3(0.16, 0.16, 0.20) * 0.3 * (0.5 + 0.5*f3) * smoothstep(0.2, 0.9, hN);  // sky in the tilted face
-      float foam = lace*0.3 + sheets*0.75 + smoothstep(0.6, 0.85, f3)*0.22*smoothstep(0.3, 1., hN);
-      float churn = (1. - smoothstep(0.0, 0.22, hN)) * mix(0.55*smoothstep(0.25, 0.75, fbm(vec2(xs*0.015, hN*2.5 - uT*0.2))), smoothstep(0.3, 0.62, fbm(vec2(xs*0.02, hN*9. - uT*0.5) + f3)), det);
-      float lip = smoothstep(0.9, 1.0, hN) * (0.35 + 0.65*f2);
-      foam = clamp(max(foam, max(churn*0.85, lip*0.8)), 0., 1.);
-      foam *= 0.7 + 0.3*det;                                                           // foam reads softer in the mirror
+    uniform samplerCube uSkyCube; uniform float uHazeL;
+    vec3 vnoiseD(vec2 p){ vec2 i = floor(p), f = fract(p), u = f*f*(3.-2.*f), du = 6.*f*(1.-f);
+      float a = h21(i), b = h21(i+vec2(1,0)), c = h21(i+vec2(0,1)), d = h21(i+vec2(1,1)), k4 = a - b - c + d;
+      return vec3(a + (b-a)*u.x + (c-a)*u.y + k4*u.x*u.y, du * vec2(b - a + k4*u.y, c - a + k4*u.x)); }
+    // streaks: long along the flow (v), narrow across (x); returns slope (dh/dx, dh/dv) and a 0..1 streak value
+    vec3 wallRelief(float x, float v, float fx, float fv){
+      vec2 g = vec2(0.); float val = 0., wsum = 0., px = 140.;
+      float warp = 30. * (vnoise(vec2(x/400., v/900.)) - 0.5);
+      for (int i = 0; i < 5; i++){
+        float pv = px * (i == 0 ? 2.5 : 4.);
+        float k = (1. - smoothstep(0.3, 0.6, fx / px)) * (1. - smoothstep(0.3, 0.6, fv / pv));
+        vec3 n = vnoiseD(vec2((x + warp) / px, v / pv) + float(i) * 7.3);
+        g += k * (i == 0 ? 0.08 : i == 1 ? 0.05 : 0.025) * n.yz / vec2(1., pv / px);          // slope ≈ amplitude(∝ px) · dn / period
+        val += k * (n.x - 0.5) * (i < 2 ? 1. : 0.6); wsum += (i < 2 ? 1. : 0.6);
+        px *= 0.42; warp *= 0.5;
+      }
+      return vec3(g, val / wsum);
+    }
+    // P: shaded point; x: along-ridge coord (skewed); hM: height above level (m); H: ridge height; N0: base normal;
+    // E: unit vector point → eye; fx, fv: pixel footprint (m) for detail fade; det: 1 wall, 0 soft (reflection)
+    vec3 wallShade(vec3 P, float x, float hM, float H, vec3 N0, vec3 E, float fx, float fv, float det, out float foamOut){
+      float hN = clamp(hM / max(H, 1.), 0., 1.), dist = length(P - eye);
+      float v = hM + 18. * uT;                                                   // the sheet pours down at ~18 m/s
+      vec3 rel = wallRelief(x, v, fx, fv);
+      vec3 N = normalize(N0 + vec3(-rel.x, 0., 0.) * 1.6 + vec3(0., 0.3, 1.) * rel.y * 1.2);
+      vec3 V = -E;
+      // sky reflection (Fresnel), blur with the sub-pixel roughness left over
+      vec3 R = reflect(V, N); R.y = abs(R.y) + 0.01;
+      float cosI = clamp(dot(N, E), 0.02, 1.), F = 0.02 + 0.98 * pow(1. - cosI, 5.);
+      vec3 sky = textureLod(uSkyCube, normalize(R), mix(4.5, 2.5, det)).rgb;
+      // body: deep water lit by the low sun behind the camera + sky ambient
+      float ndl = max(dot(N, sunDirection), 0.);
+      vec3 amb = textureLod(uSkyCube, vec3(0., 1., 0.), 6.).rgb;
+      vec3 body = vec3(0.020, 0.040, 0.046) * (0.35 + 1.4 * ndl * sunColor) + vec3(0.02, 0.035, 0.04) * amb;
+      // the face is concave: a reflected ray lower than the crest (seen from here) hits the wall itself, not the sky
+      // (tested with the smooth profile normal, softened by the relief, or its edge turns into a sawtooth)
+      vec3 R0 = reflect(V, N0);
+      float occE = (H - hM) / max(uRidge.z * sqrt(-log(max(hN, 1e-3))), 1.), rE = mix(R0.y / max(length(R0.xz), 1e-3), R.y / max(length(R.xz), 1e-3), 0.5);
+      sky = mix(body * 1.3, sky, max(smoothstep(occE - 0.09, occE + 0.09, rE), smoothstep(0.9, 1., hN)));
+      // light through the thinning lip: the sky behind the wall, filtered green-grey by the water
+      vec3 behind = textureLod(uSkyCube, normalize(vec3(V.x, 0.08, V.z)), 3.).rgb;
+      float thin = pow(smoothstep(0.6, 0.995, hN), 2.) * (0.7 + 0.6 * rel.z);
+      body += behind * vec3(0.10, 0.30, 0.26) * thin;
+      vec3 col = mix(body, sky, F);
+      // foam: aerated streaks (metric), spilling at the crest, churn at the foot; mean coverage where sub-pixel
+      float fk = 1. - smoothstep(0.4, 0.9, fx / 12.);
+      float fn = fbm(vec2(x / 45., v / 220.) + rel.z * 0.8 + vec2(0.4, 0.) * fbm(vec2(x / 12., v / 60.)));
+      float streak = mix(0.1, smoothstep(0.55, 0.85, fn), fk);
+      float crest = smoothstep(H - 18. - 0.05*H, H - 2., hM) * mix(0.6, smoothstep(0.35, 0.6, fbm(vec2(x / 14., (hM - uT*6.) / 10.))), fk);
+      float churn = 0.4 * (1. - smoothstep(4., 40. + 0.04*H, hM)) * mix(0.45, smoothstep(0.3, 0.7, fbm(vec2(x / 30., (hM + uT*3.) / 9.) + 2.3)), fk);
+      float foam = clamp(streak * smoothstep(0.1, 0.5, hN) * 0.4 + crest + churn, 0., 1.) * mix(0.6, 1., det);
+      vec3 Nf = normalize(N + 0.35 * vec3(rel.x, 0., rel.y));
+      vec3 foamCol = 0.6 * (1.1 * max(dot(Nf, sunDirection), 0.) * sunColor + 0.5 * amb);
+      col = mix(col, foamCol, foam);
       foamOut = foam;
-      vec3 foamCol = vec3(0.70, 0.67, 0.66) * (0.3 + 0.7*sunColor) * (0.75 + 0.35*f3);
-      return mix(col, foamCol, foam);
+      // aerial perspective: extinction toward the horizon sky in this direction
+      vec3 haze = textureLod(uSkyCube, normalize(vec3(V.x, 0.015, V.z)), 2.).rgb;
+      return mix(haze, col, exp(-dist / uHazeL));
     }`;
+
+  // the tidal wall: its own mesh, a grid (x across the view × profile parameter s, crest at s = 0, front s > 0) laid
+  // over the ridge profile each frame. Rows are dense at the crest; columns span only what the camera sees (uX).
+  // Displaced in metres: bulges and gullies moving down the face with the flow, a crest torn by noise, spilling
+  // lobes that lean forward (uLean pushes the whole top in the last second). Shaded by wallShade (FACE).
+  function makeWall(E, sunDir, sky) {
+    const { THREE } = E, NX = 720, NF = 170, NB = 50;
+    const prm = [], idx = [];
+    const ss = [];
+    for (let j = NB; j > 0; j--) ss.push(-j / NB);
+    for (let j = 0; j <= NF; j++) ss.push(j / NF);
+    for (let j = 0; j < ss.length; j++) for (let i = 0; i < NX; i++) prm.push(i / (NX - 1), ss[j], 0);
+    for (let j = 0; j < ss.length - 1; j++) for (let i = 0; i < NX - 1; i++) { const a = j * NX + i; idx.push(a, a + NX, a + 1, a + 1, a + NX, a + NX + 1); }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(prm, 3)); g.setIndex(idx);
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { uT: { value: 0 }, uLevel: { value: 0 }, uRidge: { value: new THREE.Vector4(-9e4, 0, 1000, 0) }, uX: { value: new THREE.Vector2(-5000, 10000) },
+        uLean: { value: 0 }, uSkyCube: { value: sky }, uHazeL: { value: 24000 },
+        sunDirection: { value: sunDir.clone() }, sunColor: { value: new THREE.Color(0xffe2c4) } },
+      vertexShader: `precision highp float; precision highp int;
+        uniform float uT, uLevel, uLean; uniform vec4 uRidge; uniform vec2 uX;
+        varying vec3 vP, vN; varying float vHM, vHL, vX;
+        ${NOISE} ${RIDGE}
+        // height of the local crest (m): the ridge profile along x, torn by metric noise
+        // (broad: the whole face follows it; tear: only the top, g → 1, so crest bumps don't groove the face below)
+        float crestH(float x, float g){ return uRidge.y * ridgeAlong(x) * (1. + 0.09*(fbm(vec2(x/650., 3.1)) - 0.5)
+          + pow(g, 12.) * (0.05*(fbm(vec2(x/170., uT*0.04 + 1.7)) - 0.5) + 0.025*(fbm(vec2(x/45., uT*0.15 + 4.2)) - 0.5))); }
+        vec3 wallPos(float x, float s, out float hL){
+          float rw = uRidge.z, rs = s > 0. ? rw : rw * 4.;
+          float dz = sign(s) * rs * 2.4 * pow(abs(s), 1.6);
+          float g = exp(-pow(dz / rs, 2.));
+          float xs = x + dz * uRidge.w;                    // skewed like the shading: features run straight down the screen
+          hL = crestH(xs, 1.); float h = crestH(xs, g) * g;
+          float v = h + 18.*uT, front = smoothstep(-0.03, 0.03, s) * smoothstep(0.01, 0.15, g);
+          float bul = (fbm(vec2(xs/420., v/650.)) - 0.5) * 0.06 * uRidge.y + (fbm(vec2(xs/90., v/380.) + 5.) - 0.5) * 0.018 * uRidge.y;
+          float lobe = smoothstep(0.5, 0.78, fbm(vec2(x/320., uT*0.06 + 9.)));
+          float lean = smoothstep(0.75, 1., g) * (0.06 * lobe + uLean) * uRidge.y;
+          return vec3(x, uLevel + h, uRidge.x + dz + bul * front + lean);
+        }
+        void main(){
+          float x = uX.x + position.x * uX.y, s = position.y, hL, h1, h2;
+          float ex = uX.y / ${NX - 1}., es = 0.004;
+          vec3 P = wallPos(x, s, hL), Px = wallPos(x + ex, s, h1), Ps = wallPos(x, s + es, h2);
+          vN = normalize(cross(Ps - P, Px - P));
+          if (vN.y < 0.) vN = -vN;
+          vP = P; vHM = P.y - uLevel; vHL = hL; vX = x + (P.z - uRidge.x) * uRidge.w;      // skew so the streaks run down the screen
+          gl_Position = projectionMatrix * viewMatrix * vec4(P, 1.);
+        }`,
+      fragmentShader: `precision highp float; precision highp int;
+        uniform float uT, uLevel; uniform vec4 uRidge; uniform vec3 sunDirection, sunColor;
+        varying vec3 vP, vN; varying float vHM, vHL, vX;
+        #define eye cameraPosition
+        ${NOISE} ${FACE}
+        void main(){
+          vec3 N = normalize(vN), E = normalize(eye - vP);
+          float f; vec3 c = wallShade(vP, vX, vHM, vHL, N, E, fwidth(vX), fwidth(vHM), 1., f);
+          gl_FragColor = vec4(c, smoothstep(0.3, 3., vHM));                // melts into the sea at the foot
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }`,
+      transparent: true, depthWrite: true, side: THREE.DoubleSide,
+    });
+    const m = new THREE.Mesh(g, mat); m.frustumCulled = false; m.renderOrder = 1;
+    return m;
+  }
 
   // the sea: three's Water (planar mirror) with its shaders rewritten around the FFT ocean (_ocean.js):
   // choppy displacement (2 coarse cascades, mip picked by mesh spacing) + per-pixel slopes (3 cascades) whose mip
@@ -208,7 +315,7 @@
       uS0: { value: O.slope[0] }, uS1: { value: O.slope[1] }, uS2: { value: O.slope[2] }, uOL: { value: new THREE.Vector3(...O.L) },
       uSubVar: { value: 0.0006 }, uTanH: { value: 0.3 }, uAspect: { value: 16 / 9 }, uMirrorW: { value: 1920 }, uRSign: { value: 1 },
       uAbsorb: { value: new THREE.Vector3(0.62, 0.22, 0.2) }, uDeep: { value: new THREE.Color(0x0a1c26) }, uSSS: { value: new THREE.Color(0x0f3a36) },
-      uHs: { value: Math.max(O.hs, 0.1) }, uSand: { value: new THREE.Color(0.47, 0.40, 0.32).multiplyScalar(0.35) } });
+      uHs: { value: Math.max(O.hs, 0.1) }, uSkyCube: { value: null }, uHazeL: { value: 24000 }, uSprayA: { value: 0 }, uSand: { value: new THREE.Color(0.47, 0.40, 0.32).multiplyScalar(0.35) } });
     const DISP = /* glsl */`
       uniform sampler2D uD0, uD1, uD2, uS0, uS1, uS2; uniform vec3 uOL;
       float shoal(float still){ return smoothstep(0.05, 1.6, still); }      // waves die out toward the waterline`;
@@ -228,7 +335,7 @@
          vec4 mvPosition = modelViewMatrix * vec4(pd, 1.0); gl_Position = projectionMatrix * mvPosition;`);
     m.fragmentShader = m.fragmentShader
       .replace('varying vec4 worldPosition;', `varying vec4 worldPosition; varying float vH, vFH; varying vec2 vXZ;
-        uniform float uT, uSlope, uFoam, uLevel, uSurge, uSubVar, uTanH, uAspect, uMirrorW, uRSign, uHs; uniform vec4 uRidge;
+        uniform float uSprayA, uT, uSlope, uFoam, uLevel, uSurge, uSubVar, uTanH, uAspect, uMirrorW, uRSign, uHs; uniform vec4 uRidge;
         uniform vec3 uAbsorb, uDeep, uSSS, uSand; ${NOISE} ${SWASH} ${FACE} ${DISP}`)
       .replace(/void main\(\) \{[\s\S]*$/, `void main() {
         #include <logdepthbuf_fragment>
@@ -244,10 +351,6 @@
         vec2 sl = (s0.xy + s1.xy + s2.xy) * kS;
         vec2 vr = (max(s0.zw - s0.xy*s0.xy, 0.) + max(s1.zw - s1.xy*s1.xy, 0.) + max(s2.zw - s2.xy*s2.xy, 0.)) * kS*kS + uSubVar*kS;
         float div = (texture2D(uD0, q0).w + texture2D(uD1, q1).w + texture2D(uD2, q2).w) * kS;
-        // ridge slope (analytic, along z)
-        float rwf = worldPosition.z > uRidge.x ? uRidge.z : uRidge.z * 4.;
-        float rz = (worldPosition.z - uRidge.x) / rwf;
-        sl.y += uRidge.y * exp(-rz*rz) * (-2.*rz / rwf);
         vec3 surfaceNormal = normalize(vec3(-sl.x, 1., -sl.y));
         // ---- reflection: taps across the sub-pixel slope distribution along the view direction ----
         vec3 V = -eyeDirection; vec2 fw = normalize(V.xz + vec2(1e-6)), sd = vec2(-fw.y, fw.x);
@@ -290,23 +393,22 @@
         float tearN = (fbm(worldPosition.xz * vec2(0.08, 0.15) + vec2(0., uT*0.3)) - 0.5) * aaT
                     + (fbm(worldPosition.xz * vec2(0.01, 0.02) + vec2(4.1, uT*0.05)) - 0.5) * aaL;
         float tearX = (fbm(worldPosition.xz * vec2(0.03, 0.25) + vec2(2.7, -uT*0.3)) - 0.5) * aaT;
-        float reflElevD = reflElev + 2. * sF + tearN * 0.014;
+        float reflElevD = reflElev + 2. * sF + tearN * 0.014 * clamp(uRidge.y / max(distR, 1.) / 0.02, 0., 1.);   // tear ∝ the ridge's size (no flecks off a low one)
         float hRef = clamp((reflElevD * distR + worldPosition.y) / max(uRidge.y, 1.0), 0., 1.);
         float xWall = eye.x + vd.x * (eye.z - uRidge.x) / max(-vd.z, 1.);             // where the reflected ray meets the wall
-        float fR; vec3 ridgeCol = faceShade(xWall + surfaceNormal.x*40. + tearX*60., hRef, 0., fR);
-        ridgeCol *= 0.7;
+        // the wall as the sea mirrors it: same shading seen from the mirrored eye, soft (coarse octaves only)
+        float fR, sR = 2. * hRef * sqrt(-log(max(hRef, 1e-3))) * uRidge.y / uRidge.z;   // front-profile slope at that height
+        vec3 Pw = vec3(xWall, uLevel + hRef * uRidge.y, uRidge.x), Em = normalize(vec3(eye.x, 2.*uLevel - eye.y, eye.z) - Pw);   // toward the mirrored eye
+        vec3 ridgeCol = wallShade(Pw, xWall + surfaceNormal.x*40. + tearX*60., hRef * uRidge.y, uRidge.y, normalize(vec3(0., 1., sR)),
+                                  Em, 30. + fwidth(xWall), 60., 0., fR);
+        ridgeCol *= 0.8;
         float occ = hasR * smoothstep(-0.0012, 0.0012, ridgeElev - reflElevD);
         float over = reflElevD - ridgeElev;
-        float sprayR = hasR * (1. - occ) * exp(-max(over, 0.) / 0.005)
+        // the crest spray above it: as much as there is (uSprayA), as tall as it is (≈ 0.4 H, seen from here)
+        float sprayR = hasR * uSprayA * (1. - occ) * exp(-max(over, 0.) / max(0.4 * uRidge.y / max(distR, 1.), 1e-5))
                      * (0.35 + 0.65*smoothstep(0.3, 0.7, fbm(vec2(worldPosition.x*0.0035 - uT*0.02, over*300. - uT*0.35))));
         outgoingLight = mix(outgoingLight, vec3(0.55, 0.52, 0.55)*(0.5 + 0.5*sunColor), sprayR*0.45);
         outgoingLight = mix(outgoingLight, mix(outgoingLight*0.15, ridgeCol, 0.92), occ);
-        float hN = clamp(vH / max(uRidge.y, 1.0), 0., 1.) * hasR;
-        float fF; vec3 face = faceShade(worldPosition.x + (worldPosition.z - uRidge.x) * uRidge.w, hN, 1., fF);   // w: skew so streaks run down the screen
-        float hz = 1. - exp(-length(vd) / 18000.);
-        face = mix(face, vec3(0.42, 0.36, 0.42), hz*0.3);
-        float faceK = smoothstep(0.015, 0.1, hN);
-        outgoingLight = mix(outgoingLight, face, faceK); a = max(a, faceK);
         // ---- shore: foam line + lace + a spilling break ----
         float lace = fbm(worldPosition.xz*vec2(1.3, 2.2) + vec2(uT*0.15, uT*0.4));
         float lace2 = fbm(worldPosition.xz*vec2(3.1, 5.3) + vec2(-uT*0.1, uT*0.5));
@@ -397,23 +499,67 @@
     return mesh;
   }
 
-  // crest spray: a camera-facing veil standing on the ridge crest, torn by noise, rising and blowing shoreward
-  function makeSpray(E) {
+  // crest spray: a raymarched volume. Proxy = a vertical plane standing one ridge-width shoreward of the crest; each
+  // pixel marches from it back through the slab behind (to 0.7 rw past the crest), stopping at the water. Density:
+  // 3D fbm advected shoreward and up (metres), confined above the local surface and around the crest. Sun single
+  // scattering (two-lobe HG: the sun is behind us, so mostly back-scatter) with a short light march for self-shadow,
+  // sky ambient, aerial haze like the wall. Output is the volume's colour + opacity over what the depth test left.
+  function makeSpray(E, sunDir, sky) {
     const { THREE } = E;
     const mat = new THREE.ShaderMaterial({
-      uniforms: { uT: { value: 0 }, uSun: { value: new THREE.Color(0xffd2b0) }, uA: { value: 0 } },
-      vertexShader: 'varying vec2 vUv; varying vec3 vW; void main(){ vUv = uv; vec4 w = modelMatrix*vec4(position,1.); vW = w.xyz; gl_Position = projectionMatrix*viewMatrix*w; }',
-      fragmentShader: `precision highp float; precision highp int; uniform float uT, uA; uniform vec3 uSun; varying vec2 vUv; varying vec3 vW; ${NOISE}
+      uniforms: { uT: { value: 0 }, uA: { value: 0 }, uOn: { value: 1 }, uLevel: { value: 0 }, uRidge: { value: new THREE.Vector4(-9e4, 0, 1000, 0) },
+        uSkyCube: { value: sky }, uHazeL: { value: 24000 }, sunDirection: { value: sunDir.clone() }, sunColor: { value: new THREE.Color(0xffe2c4) } },
+      vertexShader: 'varying vec3 vW; void main(){ vec4 w = modelMatrix*vec4(position,1.); vW = w.xyz; gl_Position = projectionMatrix*viewMatrix*w; }',
+      fragmentShader: `precision highp float; precision highp int;
+        uniform float uT, uA, uOn, uLevel, uHazeL; uniform vec4 uRidge; uniform vec3 sunDirection, sunColor; uniform samplerCube uSkyCube;
+        varying vec3 vW; ${NOISE} ${NOISE3} ${RIDGE}
+        float surfY(vec3 p){ float rs = p.z > uRidge.x ? uRidge.z : uRidge.z*4.; float d = (p.z - uRidge.x)/rs;
+          return uLevel + uRidge.y * ridgeAlong(p.x + (p.z - uRidge.x)*uRidge.w) * exp(-d*d); }
+        float dens(vec3 p, int oct, float burst){
+          float H = uRidge.y, above = p.y - surfY(p);
+          if (above < 0.) return 0.;                    // (the wall mesh occludes by depth; its torn crest differs from this profile)
+          float zc = (p.z - uRidge.x - 0.08*uRidge.z) / (0.22*uRidge.z);
+          float env = exp(-above / (0.16*H)) * smoothstep(0., 0.015*H, above) * exp(-zc*zc) * smoothstep(0.6*H, 0.85*H, p.y - uLevel);
+          env *= burst;
+          if (env < 0.01) return 0.;
+          vec3 w = p - vec3(0., 10., 16.)*uT; w.z -= 0.6 * above;                        // blown up and shoreward: streamers lean
+          vec3 q = w / vec3(90., 150., 140.);
+          float n = fbm3(q + 0.6*fbm3(q*vec3(2.1, 1.3, 2.1) + 3.3, 2), oct);
+          return env * smoothstep(0.52, 0.7, n);
+        }
+        float hg(float c, float g){ return (1. - g*g) / pow(1. + g*g - 2.*g*c, 1.5); }   // ×4π: 1 = isotropic
         void main(){
-          float x = vW.x, y = vUv.y;                                        // y: 0 at the crest → 1 at the veil top
-          vec2 q = vec2(x*0.0035 - uT*0.02, y*2.2 - uT*0.35);
-          float n = fbm(q + fbm(q*2.0 + 5.)*0.8);
-          float plume = smoothstep(0.3, 0.7, n);
-          float body = smoothstep(0.04, 0.3, y) * pow(1. - y, 1.2);                   // soft base: a hard one reflected as scratches
-          float mist = 0.35 * pow(1. - y, 3.) * smoothstep(0.02, 0.25, y);
-          float a = clamp(plume*body + mist, 0., 1.) * uA;
-          vec3 c = mix(vec3(0.46, 0.44, 0.48), vec3(0.85, 0.78, 0.74)*uSun, 0.35 + 0.5*n);
-          gl_FragColor = vec4(c, a * 0.85);
+          if (uOn < 0.5 || uA < 0.002) discard;
+          vec3 ro = cameraPosition, rd = normalize(vW - ro);
+          float zB = uRidge.x - 0.35*uRidge.z;
+          float tE = length(vW - ro), tX = rd.z < -1e-4 ? (zB - ro.z) / rd.z : tE;
+          float n = 18., dt = max(tX - tE, 1.) / n;
+          float t = tE + dt * h21(gl_FragCoord.xy + fract(uT*7.3)*97.);
+          vec3 pE = ro + rd*tE;                                                         // bursts along the crest (x barely changes along a ray)
+          float burst = smoothstep(0.3, 0.65, fbm(vec2(pE.x/900. - uT*0.03, 2.7)) + 0.25*fbm(vec2(pE.x/260., uT*0.1)));
+          if (burst < 0.01 || uA < 0.002) discard;
+          float c = dot(rd, sunDirection), ph = 0.35*hg(c, 0.6) + 0.65*hg(c, -0.3);
+          vec3 amb = textureLod(uSkyCube, vec3(0., 1., 0.), 6.).rgb, hor = textureLod(uSkyCube, normalize(vec3(rd.x, 0.05, rd.z)), 3.).rgb;
+          float sig = 0.02, T = 1.; vec3 L = vec3(0.);
+          for (int i = 0; i < 18; i++){
+            vec3 p = ro + rd*t; float d = dens(p, 4, burst);
+            if (d > 0.002){
+              float od = 0.;                                                          // toward the sun: self-shadow
+              od = dens(p + sunDirection*90., 2, burst) * 140.;
+              vec3 Ls = sunColor * 1.6 * ph * exp(-sig*od) + (amb*0.7 + hor*0.5);
+              float a = 1. - exp(-sig*d*dt);
+              L += T * a * Ls * 0.4; T *= 1. - a;
+              if (T < 0.02) break;
+            }
+            t += dt;
+          }
+          float A = (1. - T) * uA;
+          if (A < 0.002) discard;
+          vec3 C = L / max(1. - T, 1e-4);
+          vec3 haze = textureLod(uSkyCube, normalize(vec3(rd.x, 0.015, rd.z)), 2.).rgb;
+          C = mix(haze, C, exp(-tE / uHazeL));
+          if (!(A > 0.) || any(isnan(C)) || any(isinf(C))) discard;
+          gl_FragColor = vec4(min(C, vec3(8.)), clamp(A, 0., 1.));
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
         }`,
@@ -488,18 +634,40 @@
     // environment from the sky for wet-sand reflections (once)
     const pm = new THREE.PMREMGenerator(renderer), skyScene = new THREE.Scene(); const sky2 = new Sky(); sky2.scale.setScalar(1000);
     Object.keys(su).forEach((k) => { if (sky2.material.uniforms[k]) sky2.material.uniforms[k].value = su[k].value?.clone ? su[k].value.clone() : su[k].value; });
-    skyScene.add(sky2); scene.environment = pm.fromScene(skyScene).texture; scene.environmentIntensity = o.envI ?? 0.5;
+    skyScene.add(sky2); scene.environment = pm.fromScene(skyScene).texture;
+    // the same sky as a plain cube (linear HDR, mipmapped) for the wall face's reflection and aerial haze
+    const cubeRT = new THREE.WebGLCubeRenderTarget(128, { type: THREE.HalfFloatType, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter });
+    new THREE.CubeCamera(1, 5000, cubeRT).update(renderer, skyScene); scene.environmentIntensity = o.envI ?? 0.5;
     const sun = new THREE.DirectionalLight(0xffb98a, o.sunI ?? 3.2); sun.position.copy(sunDir).multiplyScalar(100);
     const hemi = new THREE.HemisphereLight(0x8fa3c4, 0x3a2f26, o.hemiI ?? 0.35);
     scene.add(sun, hemi);
     const sand = makeSand(E, o.prints); scene.add(sand);
     // dusk calm: light air over a long swell from slightly left of straight inshore (glassy enough to mirror the planet)
     const ocean = OCEAN.make(E, Object.assign({ wind: 2.2, fetch: 2e4, dir: 0.15, spread: 5, chop: 0.9, damp: 2.5,
-      swell: { hs: 0.45, len: 55, dir: -0.08, spread: 0.12 } }, o.ocean)); const water = makeWater(E, sunDir, ocean); scene.add(water);
-    const spray = makeSpray(E); scene.add(spray);
+      swell: { hs: 0.45, len: 55, dir: -0.08, spread: 0.12 } }, o.ocean)); const water = makeWater(E, sunDir, ocean); scene.add(water); water.material.uniforms.uSkyCube.value = cubeRT.texture;
+    const spray = makeSpray(E, sunDir, cubeRT.texture); scene.add(spray);
+    const wall = makeWall(E, sunDir, cubeRT.texture); scene.add(wall);
     const planet = makePlanet(E, o.kind ?? 'giant'); planet.material.uniforms.uSun.value.copy(sunDir); scene.add(planet);
     planet.rotation.set(0.08, 0.4, -0.12);
-    return { sky, sand, water, spray, planet, sunDir, sun, hemi, ocean };
+    // the spray is skipped in the sea's mirror pass (faked there as sprayR); per draw, since that pass runs nested
+    // inside the main render
+    spray.onBeforeRender = (r, sc, camera) => { spray.material.uniforms.uOn.value = camera === E.cam ? 1 : 0; };
+    const world = { sky, sand, water, spray, wall, planet, sunDir, sun, hemi, ocean };
+    // per render (main + mirror pass), from the camera actually used: lens uniforms, the wall's visible x span
+    const prev = scene.onBeforeRender;
+    scene.onBeforeRender = function (r, sc, camera, ...rest) {
+      if (prev) prev.call(this, r, sc, camera, ...rest);
+      if (!camera.isPerspectiveCamera) return;
+      const u = water.material.uniforms; u.uTanH.value = Math.tan(camera.fov * Math.PI / 360); u.uAspect.value = camera.aspect;
+      const wu = wall.material.uniforms, Rg = wu.uRidge.value;
+      if (!wall.visible) return;
+      const d = camera.getWorldDirection(new THREE.Vector3()), az = Math.atan2(d.x, -d.z);
+      const hf = Math.atan(Math.tan(camera.fov * Math.PI / 360) * camera.aspect) * 1.25 + 0.02;
+      const D = Math.max(camera.position.z - Rg.x, 100), sk = Rg.w * 0;
+      const x0 = camera.position.x + D * Math.tan(az - hf) - 200, x1 = camera.position.x + D * Math.tan(az + hf) + 200;
+      wu.uX.value.set(x0 + sk, x1 - x0);
+    };
+    return world;
   }
 
   // place a body of apparent diameter `ang` (rad) at azimuth az (rad, 0 = straight out to sea, +right),
@@ -515,15 +683,18 @@
     const u = w.water.material.uniforms;
     w.water.position.y = s.level ?? 0;
     w.ocean.update(s.t);
-    u.uT.value = s.t; u.uTanH.value = Math.tan(E.cam.fov * Math.PI / 360); u.uAspect.value = E.cam.aspect; u.uSurge.value = s.surge ?? 0.07; u.uLevel.value = s.level ?? 0;
+    u.uT.value = s.t; u.uSurge.value = s.surge ?? 0.07; u.uLevel.value = s.level ?? 0;
     u.uRidge.value.set(s.ridgeZ ?? -9e4, s.ridgeH ?? 0, s.ridgeW ?? 1500, s.ridgeSkew ?? 0);   // skew = tan(view azimuth)
     u.uFoam.value = s.foam ?? 1;
-    // spray veil: 60 km wide, stands just shoreward of the crest, height ∝ ridge height
-    const H = s.ridgeH ?? 0, sp = w.spray;
-    sp.visible = H > 5;
-    sp.position.set(0, (s.level ?? 0) + H * 0.75, (s.ridgeZ ?? -9e4) + (s.ridgeW ?? 1500) * 0.15);
-    sp.scale.set(60000, H * (s.sprayH ?? 0.8), 1);
-    sp.material.uniforms.uT.value = s.t; sp.material.uniforms.uA.value = Math.min(1, H / 120) * (s.spray ?? 1);
+    const wu = w.wall.material.uniforms;
+    w.wall.visible = (s.ridgeH ?? 0) > 1;
+    wu.uT.value = s.t; wu.uLevel.value = s.level ?? 0; wu.uRidge.value.copy(u.uRidge.value); wu.uLean.value = s.lean ?? 0;
+    // spray volume: its proxy plane stands one ridge-width shoreward of the crest, 60 km wide, 0.5 → 1.8 H
+    const H = s.ridgeH ?? 0, sp = w.spray, su = sp.material.uniforms;
+    sp.visible = H > 5 && (s.spray ?? 1) > 0;
+    sp.position.set(0, (s.level ?? 0) + H * 0.5, (s.ridgeZ ?? -9e4) + (s.ridgeW ?? 1500));
+    sp.scale.set(60000, H * 1.3, 1);
+    su.uT.value = s.t; su.uA.value = sp.visible ? Math.min(1, H / 120) * (s.spray ?? 1) : 0; u.uSprayA.value = su.uA.value; su.uLevel.value = s.level ?? 0; su.uRidge.value.copy(u.uRidge.value);
     w.sand.userData.U.uLevel.value = s.level ?? 0; w.sand.userData.U.uWet.value = s.wet ?? 0.14; w.sand.userData.U.uT.value = s.t;
     w.sky.material.uniforms.time.value = s.t;
     w.planet.material.uniforms.uLevel.value = (s.level ?? 0) + (s.ridgeH ?? 0) * 0;

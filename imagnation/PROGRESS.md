@@ -9,6 +9,11 @@ wall is redone → **Sprint 4b · Wall upgrade** (below). Work moves to a faster
 github.com/dizhangai-star/imagination, root = `videos/` with `_kit/` + `imagnation/`; run `npm install` in `_kit`).
 Then Sprint 5: sound (turn every clip's `sfxDraft` into `sfx`, score `audio/music.mjs`).
 
+**Sprint 4b status (2026-09-29): A + B + C + D done** → `out/style-frames-4b.png` (before | after, 16 samples, at
+4 / 6 / 7.5 / 8.1 s; A + B alone: `out/style-frames-4b-AB.png`), `out/03-wall.mp4` re-rendered. Waiting for the user's
+review; then re-compile the cut (`compile.mjs --out out/sprint4b-draft.mp4 --silent`) → picture lock → Sprint 5.
+Not used yet: `update({lean})` (pushes the whole crest forward) — the crest leaves the frame at 7.5 s, so it wouldn't show.
+
 ### Sprint 4b · Wall upgrade (proposed plan: do A + B first, show a style frame, then C + D)
 Why it reads as a texture (diagnosis on 03 frames):
 1. Streaks are painted colour in `faceShade(x, hN)` on a smooth surface — no normal, no reflection, no parallax.
@@ -142,4 +147,35 @@ reference: the Miller's-planet wave in *Interstellar* — learn the haze/scale, 
   shears the face's x lookup (`x + (z − ridgeZ)·skew`) so they pour straight down the screen.
 - Spray veil: a hard base (smoothstep 0 → 0.06) reflected in the sea as thin vertical scratches and sat as a
   detached cloud bank; base now at 0.75 H with a soft fade (0.04 → 0.3), so it grows out of the crest.
+- **Wall v2 (Sprint 4b A + B).** `FACE` is now `wallShade(P, x, hM, H, N0, E, fx, fv, det)`: relief of the sheet
+  pouring down in metres (`wallRelief`, analytic-derivative value noise, octaves fade by pixel footprint `fwidth`),
+  Fresnel reflection of the sky from `uSkyCube` (a 128² CubeCamera render of the Preetham sky, built once in `build`),
+  body lit by the sun behind us, lip transmission, lit foam, aerial perspective `exp(−d / uHazeL)` (24 km) toward the
+  horizon sky in the view direction. Gotchas found: (1) the face must NOT use the sea's FFT slopes — they lie across
+  the steep face in xz as fine horizontal lines; use the ridge slope only (`slR`). (2) The face is concave: a
+  reflected ray below the crest's elevation hits the wall, not the sky → `occE` test (with the smooth-profile normal
+  mostly, or its edge is a sawtooth); this is what gives the dark foot. (3) The mirror copy is shaded from the
+  mirrored eye (y = 2·level − eye.y), not a sign-flipped view vector. (4) Strong relief normals make the reflection
+  flip between blue zenith and the warm horizon → keep slope amplitudes ≤ 0.08.
+- **Wall v3 (Sprint 4b C).** The sea mesh no longer carries the ridge; `makeWall` is its own mesh: 720 columns × 220
+  rows (profile parameter s, crest at 0, dense there, front s > 0 to 2.4 rw, back to 9.6 rw), columns spanning only the
+  camera's view at the crest distance (`uX`, set per render in `scene.onBeforeRender`). Displaced in metres: bulges
+  (420 × 650 m) and gullies moving down with the flow, crest height torn by noise, spilling lobes lean forward. Normal
+  by finite differences in the vertex shader. Gotchas: every x-lookup that shapes the face (bulges, crest height) must
+  use the skewed x (`x + dz·tan(az)`) or features run diagonally down the screen; fine crest noise must be confined to
+  the top (`pow(g, 12)`) or each crest bump grooves the whole face into corrugation.
+- **Spray v2 (Sprint 4b D).** `makeSpray` = raymarched volume behind a proxy plane one ridge-width shoreward of the
+  crest (0.5 → 1.8 H): 18 steps to 0.35 rw behind the crest, fbm3 density stretched up and leaning shoreward, confined
+  above the analytic surface and around the crest, gated by bursts along x (evaluated once per ray); one light step for
+  self-shadow; two-lobe HG (sun behind us → back-scatter). Gotchas: (1) don't stop the march at the analytic surface —
+  the mesh crest is torn differently and a clear strip appears above it; the wall mesh occludes by depth anyway.
+  (2) The sea's mirror pass renders nested INSIDE the main render, so per-camera switches belong in the object's own
+  `onBeforeRender`, not `scene.onBeforeRender`. The spray is off in the mirror pass (`uOn`). (3) At samples 16 the frame
+  came out white (empty canvas) until the spray's output was guarded against NaN/Inf (`discard`); 8 and 12 worked.
+- Sea at film 16–17 s (user, 2026-09-29): the faked spray reflection `sprayR` switched on at full strength as soon as
+  the ridge passed 1 m (`hasR`), over a fixed 0.005 rad band — i.e. most of the visible sea from 1.4 m up — so the sea
+  went pale and the planet's reflection vanished at 03 1.6 s. Now scaled by the spray amount (`uSprayA`) and by the
+  spray's angular height (0.4 H / distance); the reflection tear is scaled by the ridge's angular size.
+- Camera-dependent uniforms (`uTanH`, `uAspect`, wall `uX`) are set per render from the camera actually used, not in
+  `update` — the clips set the camera after `update`, so these lagged one frame (01/02 zoom).
 - Numeric checks of GPU passes: open the clip in puppeteer and `readRenderTargetPixels` (`OCEAN.make(...).readRaw(t, c)`).
