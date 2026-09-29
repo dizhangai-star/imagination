@@ -10,8 +10,8 @@ window.CLIP = {
   vignette: 0.45, grain: 0.05,
   caps: [[1.0, 4.0, 'I keep having the same dream', '我总是做同一个梦']],
   glyphs: '梦中时间天体质量行星距离地球木星最近时的所见倍视直径潮高',
-  // sound draft for Sprint 4 (not read by music.mjs yet): footsteps, surf, the low tone at the arc
-  sfxDraft: [[0.3, 'step'], [0.88, 'step'], [1.46, 'step'], [2.04, 'step'], [2.64, 'step'], [3.28, 'step'], [4.0, 'step'], [4.9, 'step', { v: 0.6 }], [3.6, 'tone']],
+  // sound (audio/music.mjs): footsteps, surf, the low tone at the arc
+  sfx: [[0.3, 'step'], [0.88, 'step'], [1.46, 'step'], [2.04, 'step'], [2.64, 'step'], [3.28, 'step', { v: 0.9 }], [4.0, 'step', { v: 0.75 }], [4.9, 'step', { v: 0.5 }], [3.6, 'tone', { d: 5 }]],
   // walker position along the shore (x, m): 1.3 m/s, slowing to a stop between 3.2 and 6 s
   walkX(t) { const v = 1.3, a = 3.2, b = 6.0, u = Math.min(Math.max(t - a, 0), b - a); return 4 - v * Math.min(t, a) - v * (u - u * u / (2 * (b - a))); },
   setup(E) {

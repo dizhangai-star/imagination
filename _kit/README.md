@@ -62,7 +62,7 @@ Film folders live next to `_kit/` (`videos/<name>/`), so pages load `../_kit/...
 | `node ../_kit/bin/srt.mjs` | `config.subtitles` → `out/<film>.srt` (flags subtitles < 1.8 s) | instant |
 | `node ../_kit/bin/clean.mjs [--frames\|--drafts\|--cache] [--yes]` | reclaimable disk (dry run by default) | instant |
 | `node ../_kit/lib/film.mjs [<id> <field>]` | film layout, or one clip field (`timing`, `narration.zh`) | instant |
-| poster | `node preview.mjs <id> <t> --cols 1 --w 1920 --out out/poster.png` | ~3 s |
+| poster | `ffmpeg -ss <film s> -i out/<film>.mp4 -frames:v 1 out/poster.png` (preview.mjs stamps a time label) | ~1 s |
 
 ## Sound
 - **dsp.mjs** — `rng(seed)` → `{rnd, jit}`; `voices({sr, n, rnd, music, sfx})` → `partials`, `mbox` (music box),

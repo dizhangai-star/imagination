@@ -9,8 +9,8 @@ window.CLIP = {
   vignette: 0.45, grain: 0.05,
   caps: [[1.6, 6.4, "The sea isn't leaving. It's being pulled.", '海不是在退去，是被拉走']],
   glyphs: '梦中时间天体质量行星距离地球木星最近时的所见倍视直径潮高',
-  // sound draft for Sprint 4 (not read by music.mjs yet): surf fades out, drain hiss as the water retreats, sub drone
-  sfxDraft: [[0.0, 'drone'], [1.0, 'drain', { d: 5 }], [4.0, 'hush', { d: 2 }]],
+  // sound (audio/music.mjs): surf fades out, drain hiss as the water retreats, sub drone
+  sfx: [[-1.0, 'drone', { d: 10.5 }], [1.0, 'drain', { d: 3.4 }], [4.0, 'hush']],
   level(t) { return LEVEL * this.E.eInOut(this.E.seg(t, 0.4, 7.6)); },
   setup(E) { this.E = E; this.w = WORLD.build(E, { sunAz: 20 }); },
   draw(t, E) {

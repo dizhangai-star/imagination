@@ -10,8 +10,8 @@ window.CLIP = {
   vignette: 0.5, grain: 0.05,
   caps: [[2.2, 5.4, 'Tidal bulge: one kilometre', '潮汐隆起 一千米']],
   glyphs: '梦中时间天体质量行星距离地球木星最近时的所见倍视直径潮高',
-  // sound draft (Sprint 5): braam as the horizon lifts, rising roar + rumble, hard silence at 7.6
-  sfxDraft: [[2.0, 'braam'], [2.0, 'roar', { d: 5.6 }], [5.0, 'rumble', { d: 2.6 }], [7.6, 'silence']],
+  // sound (audio/music.mjs): braam as the horizon lifts, rising roar + rumble, hard silence at 7.6
+  sfx: [[2.0, 'braam'], [2.0, 'roar', { d: 5.6 }], [5.0, 'rumble', { d: 2.6 }], [7.6, 'silence']],
   level(t) { return -3 - 0.6 * this.E.eInOut(this.E.seg(t, 0, 8.3)); },
   // the ridge: born on the horizon under the planet, growing and accelerating toward us
   ridge(t) {

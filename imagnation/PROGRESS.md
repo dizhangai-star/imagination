@@ -3,16 +3,20 @@
 **Resume here:** read this file (and `TREATMENT.md`), then continue from **Next step**.
 
 ## Next step
-Sprint 4 cut is `out/sprint4-draft.mp4` (30 s, silent; not in git — re-render with `render.mjs` + `compile.mjs`).
-**User review (2026-09-29): the water wall in 03 looks like a texture/decal.** Picture lock is on hold until the
-wall is redone → **Sprint 4b · Wall upgrade** (below). Work moves to a faster machine (repo:
-github.com/dizhangai-star/imagination, root = `videos/` with `_kit/` + `imagnation/`; run `npm install` in `_kit`).
-Then Sprint 5: sound (turn every clip's `sfxDraft` into `sfx`, score `audio/music.mjs`).
+**Delivered (Sprint 6, 2026-09-29):** `out/imagnation.mp4` (30.00 s, 1920×1080@30, −15.9 LUFS, −1.3 dBTP, `check.mjs`
+OK; black = the intended fades + the 22.6–23.6 hard cut), `out/imagnation.srt` (3 captions), `out/poster.png` (film
+22.1 s = 03 @ 7.1: the wall under the planet), `out/poster-alt.png` (film 7.5 s: planet rising). Style-wide lessons
+moved to `../_kit/styles/cg-lab/STYLE.md` §5 "Learned on imagnation". Open only if the user asks: the review items
+below (calm vs roar contrast, drone swirl, wall hold 7.5–8.3 s, 04's dim physics line); `clean.mjs --yes` frees
+~93 MB of drafts/frames.
 
-**Sprint 4b status (2026-09-29): A + B + C + D done** → `out/style-frames-4b.png` (before | after, 16 samples, at
-4 / 6 / 7.5 / 8.1 s; A + B alone: `out/style-frames-4b-AB.png`), `out/03-wall.mp4` re-rendered. Waiting for the user's
-review; then re-compile the cut (`compile.mjs --out out/sprint4b-draft.mp4 --silent`) → picture lock → Sprint 5.
-Not used yet: `update({lean})` (pushes the whole crest forward) — the crest leaves the frame at 7.5 s, so it wouldn't show.
+Sound map (film s): 0–7 surf (hiss follows the drawn swash `_world.js` SURFACE at x 0, per-clip `update({t})` offset
+`UT`) + wind + 8 wet-sand steps; 3.6 low tone D2 → 6.0 sub drone (J-cut) → 8–11.4 drain fizz → 10.6–13.4 hush
+(−24 dB, whole mix) → 17.0 braam (−14 dB) + roar (brown noise opening, −11 dB at 22.5) + rumble 20 + riser →
+**22.6–23.6 digital silence** (gate after the reverb, so no tail) → 23.6 one wave under the black → 25.2 held A4,
+surf + wind back at half level; the film fades out over the last 1.2 s.
+Open for review: overall contrast calm vs roar is ~13 dB (loudnorm lifts the quiet start); the drone's detuned
+saws swirl (visible arcs 13–17 s in a spectrogram) — keep or go single-voice.
 
 ### Sprint 4b · Wall upgrade (proposed plan: do A + B first, show a style frame, then C + D)
 Why it reads as a texture (diagnosis on 03 frames):
@@ -57,7 +61,8 @@ reference: the Miller's-planet wave in *Interstellar* — learn the haze/scale, 
   地球质量) · 距离 (地球离木星最近时的 1/N, 5.88e8 km) · 视直径 (地球上所见木星的 N 倍, 50.1″) · 潮高. End card
   (04) must use the same yardsticks, not "2.4 倍地月距离"
 - **Planet azimuth** −0.3 rad (exactly opposite the sun at az +20°) in every clip, so it's lit full
-- Sound cue drafts live in `sfxDraft` (music.mjs throws on unknown `sfx` kinds); Sprint 4 turns them into `sfx`
+- Sound: cue sheets in each clip's `sfx`; kinds are all defined in `audio/music.mjs` `KINDS` (throws on unknown); `hush` /
+  `silence` are gain events applied after the reverb; continuous beds (surf, wind) are placed by film time in music.mjs
 
 ## Sprints
 - [x] **0 · Brief + treatment + look v1** (`out/style-frames-v1.png`)
@@ -76,8 +81,8 @@ reference: the Miller's-planet wave in *Interstellar* — learn the haze/scale, 
   past the top 7.5 s (`H` 620 m, `z` −16 → −5 km, k^3.2), spray ramps 3.5–6.5 s, seeded sine shake from 5 s, hard
   cut to black at 8.3 (`fade [8.26, 8.3]`). 04: 01's last framing, `kind: 'moon'` at real size, fade-in 1.4 s,
   title MEGALOPHOBIA / 巨物恐惧症 + physics line (1/N computed from `physics(distAt(24))`) in the sky above the Moon.
-- [ ] **5 · Sound** (no narration) → mixed draft
-- [ ] **6 · Polish + delivery**: compile, check.mjs OK, srt, poster, STYLE.md gotchas
+- [x] **5 · Sound** (no narration) → `out/imagnation.mp4` mixed draft — accepted (user moved on to Sprint 6)
+- [x] **6 · Polish + delivery**: check.mjs OK, srt, poster, STYLE.md gotchas
 
 ## How it works
 - `engine.html?clip=<id>` loads `<clipDir>/<id>.js`; `window.renderAt(t)` draws frame t. Timing in `timeline.js`.
@@ -179,3 +184,7 @@ reference: the Miller's-planet wave in *Interstellar* — learn the haze/scale, 
 - Camera-dependent uniforms (`uTanH`, `uAspect`, wall `uX`) are set per render from the camera actually used, not in
   `update` — the clips set the camera after `update`, so these lagged one frame (01/02 zoom).
 - Numeric checks of GPU passes: open the clip in puppeteer and `readRenderTargetPixels` (`OCEAN.make(...).readRaw(t, c)`).
+- Audio envelopes: a cue's first sample is `floor(t·SR)`, so `(x − t)/d` can be slightly negative there → `neg ** 2.2`
+  = NaN poisons the whole bus. Clamp every envelope base (`c01`).
+- Review sound without listening: `BUS=1 node audio/music.mjs` (music | sfx dB per 0.5 s) + an ffmpeg
+  `showspectrumpic` of the film; two detuned sines on a held note beat visibly (pulsing blobs) → use one voice.
