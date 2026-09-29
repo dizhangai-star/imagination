@@ -9,6 +9,9 @@ wall is redone → **Sprint 4b · Wall upgrade** (below). Work moves to a faster
 github.com/dizhangai-star/imagination, root = `videos/` with `_kit/` + `imagnation/`; run `npm install` in `_kit`).
 Then Sprint 5: sound (turn every clip's `sfxDraft` into `sfx`, score `audio/music.mjs`).
 
+**Sprint 4b status (2026-09-29): A + B done** → `out/style-frames-4b-AB.png` (before | after at 4 / 6 / 7.5 / 8.1 s).
+Waiting for the user's verdict on the A + B style frame before C (geometry: torn crest, bulges) + D (volumetric spray).
+
 ### Sprint 4b · Wall upgrade (proposed plan: do A + B first, show a style frame, then C + D)
 Why it reads as a texture (diagnosis on 03 frames):
 1. Streaks are painted colour in `faceShade(x, hN)` on a smooth surface — no normal, no reflection, no parallax.
@@ -142,4 +145,14 @@ reference: the Miller's-planet wave in *Interstellar* — learn the haze/scale, 
   shears the face's x lookup (`x + (z − ridgeZ)·skew`) so they pour straight down the screen.
 - Spray veil: a hard base (smoothstep 0 → 0.06) reflected in the sea as thin vertical scratches and sat as a
   detached cloud bank; base now at 0.75 H with a soft fade (0.04 → 0.3), so it grows out of the crest.
+- **Wall v2 (Sprint 4b A + B).** `FACE` is now `wallShade(P, x, hM, H, N0, E, fx, fv, det)`: relief of the sheet
+  pouring down in metres (`wallRelief`, analytic-derivative value noise, octaves fade by pixel footprint `fwidth`),
+  Fresnel reflection of the sky from `uSkyCube` (a 128² CubeCamera render of the Preetham sky, built once in `build`),
+  body lit by the sun behind us, lip transmission, lit foam, aerial perspective `exp(−d / uHazeL)` (24 km) toward the
+  horizon sky in the view direction. Gotchas found: (1) the face must NOT use the sea's FFT slopes — they lie across
+  the steep face in xz as fine horizontal lines; use the ridge slope only (`slR`). (2) The face is concave: a
+  reflected ray below the crest's elevation hits the wall, not the sky → `occE` test (with the smooth-profile normal
+  mostly, or its edge is a sawtooth); this is what gives the dark foot. (3) The mirror copy is shaded from the
+  mirrored eye (y = 2·level − eye.y), not a sign-flipped view vector. (4) Strong relief normals make the reflection
+  flip between blue zenith and the warm horizon → keep slope amplitudes ≤ 0.08.
 - Numeric checks of GPU passes: open the clip in puppeteer and `readRenderTargetPixels` (`OCEAN.make(...).readRaw(t, c)`).

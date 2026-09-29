@@ -164,28 +164,70 @@
       return sw + ridge;
     }`;
 
-  // the tidal wall's face at (x, height fraction hN): water pouring down (phase = height + t), marbled foam lace,
-  // light through the thinning lip, sky sheen, whitewater churn at the foot. Used for the wall AND its reflection.
+  // the tidal wall's face, shaded as water (used for the wall AND its reflection in the sea):
+  // relief of the sheet pouring down the face in METRES (x along the ridge, v = height above level + flow·t), so detail
+  // keeps its size as the wall grows and fades out by pixel footprint with range; Fresnel reflection of the sky
+  // (uSkyCube) off the relief normal over a dark lit body; light through the thin lip; foam as a lit rough layer;
+  // aerial perspective (Beer–Lambert toward the horizon sky in the view direction).
   const FACE = /* glsl */`
-    vec3 faceShade(float xs, float hN, float det, out float foamOut){   // det: 1 = wall, 0 = soft (blurred reflection)
-      float f1 = fbm(vec2(xs*0.012, hN*0.9 + uT*0.45));
-      float f2 = fbm(vec2(xs*0.05, hN*1.6 + uT*0.9) + 3.1);
-      float f3 = mix(0.5, fbm(vec2(xs*0.16, hN*3.2 + uT*1.5) + 7.7), det);
-      float lace = (1. - smoothstep(0.0, 0.07, abs(fbm(vec2(xs*0.022, hN*3. + uT*0.7) + f1*1.4) - 0.5))) * smoothstep(0.4, 0.7, f2) * det;
-      float sheets = pow(smoothstep(0.5, 0.85, f2), 1.5) * (0.5 + f1);
-      vec3 deep = vec3(0.015, 0.027, 0.034), mid = vec3(0.026, 0.052, 0.058);
-      vec3 col = mix(deep, mid, smoothstep(0.1, 0.8, hN)) * (0.75 + 0.6*f1);
-      float thin = smoothstep(0.5, 0.96, hN);
-      col += vec3(0.03, 0.105, 0.095) * thin * (0.45 + 0.9*f2);                       // light through the lip
-      col += vec3(0.16, 0.16, 0.20) * 0.3 * (0.5 + 0.5*f3) * smoothstep(0.2, 0.9, hN);  // sky in the tilted face
-      float foam = lace*0.3 + sheets*0.75 + smoothstep(0.6, 0.85, f3)*0.22*smoothstep(0.3, 1., hN);
-      float churn = (1. - smoothstep(0.0, 0.22, hN)) * mix(0.55*smoothstep(0.25, 0.75, fbm(vec2(xs*0.015, hN*2.5 - uT*0.2))), smoothstep(0.3, 0.62, fbm(vec2(xs*0.02, hN*9. - uT*0.5) + f3)), det);
-      float lip = smoothstep(0.9, 1.0, hN) * (0.35 + 0.65*f2);
-      foam = clamp(max(foam, max(churn*0.85, lip*0.8)), 0., 1.);
-      foam *= 0.7 + 0.3*det;                                                           // foam reads softer in the mirror
+    uniform samplerCube uSkyCube; uniform float uHazeL;
+    vec3 vnoiseD(vec2 p){ vec2 i = floor(p), f = fract(p), u = f*f*(3.-2.*f), du = 6.*f*(1.-f);
+      float a = h21(i), b = h21(i+vec2(1,0)), c = h21(i+vec2(0,1)), d = h21(i+vec2(1,1)), k4 = a - b - c + d;
+      return vec3(a + (b-a)*u.x + (c-a)*u.y + k4*u.x*u.y, du * vec2(b - a + k4*u.y, c - a + k4*u.x)); }
+    // streaks: long along the flow (v), narrow across (x); returns slope (dh/dx, dh/dv) and a 0..1 streak value
+    vec3 wallRelief(float x, float v, float fx, float fv){
+      vec2 g = vec2(0.); float val = 0., wsum = 0., px = 140.;
+      float warp = 30. * (vnoise(vec2(x/400., v/900.)) - 0.5);
+      for (int i = 0; i < 5; i++){
+        float pv = px * (i == 0 ? 2.5 : 4.);
+        float k = (1. - smoothstep(0.3, 0.6, fx / px)) * (1. - smoothstep(0.3, 0.6, fv / pv));
+        vec3 n = vnoiseD(vec2((x + warp) / px, v / pv) + float(i) * 7.3);
+        g += k * (i == 0 ? 0.08 : i == 1 ? 0.05 : 0.025) * n.yz / vec2(1., pv / px);          // slope ≈ amplitude(∝ px) · dn / period
+        val += k * (n.x - 0.5) * (i < 2 ? 1. : 0.6); wsum += (i < 2 ? 1. : 0.6);
+        px *= 0.42; warp *= 0.5;
+      }
+      return vec3(g, val / wsum);
+    }
+    // P: shaded point; x: along-ridge coord (skewed); hM: height above level (m); H: ridge height; N0: base normal;
+    // E: unit vector point → eye; fx, fv: pixel footprint (m) for detail fade; det: 1 wall, 0 soft (reflection)
+    vec3 wallShade(vec3 P, float x, float hM, float H, vec3 N0, vec3 E, float fx, float fv, float det, out float foamOut){
+      float hN = clamp(hM / max(H, 1.), 0., 1.), dist = length(P - eye);
+      float v = hM + 18. * uT;                                                   // the sheet pours down at ~18 m/s
+      vec3 rel = wallRelief(x, v, fx, fv);
+      vec3 N = normalize(N0 + vec3(-rel.x, 0., 0.) * 1.6 + vec3(0., 0.3, 1.) * rel.y * 1.2);
+      vec3 V = -E;
+      // sky reflection (Fresnel), blur with the sub-pixel roughness left over
+      vec3 R = reflect(V, N); R.y = abs(R.y) + 0.01;
+      float cosI = clamp(dot(N, E), 0.02, 1.), F = 0.02 + 0.98 * pow(1. - cosI, 5.);
+      vec3 sky = textureLod(uSkyCube, normalize(R), mix(4.5, 2.5, det)).rgb;
+      // body: deep water lit by the low sun behind the camera + sky ambient
+      float ndl = max(dot(N, sunDirection), 0.);
+      vec3 amb = textureLod(uSkyCube, vec3(0., 1., 0.), 6.).rgb;
+      vec3 body = vec3(0.020, 0.040, 0.046) * (0.35 + 1.4 * ndl * sunColor) + vec3(0.02, 0.035, 0.04) * amb;
+      // the face is concave: a reflected ray lower than the crest (seen from here) hits the wall itself, not the sky
+      // (tested with the smooth profile normal, softened by the relief, or its edge turns into a sawtooth)
+      vec3 R0 = reflect(V, N0);
+      float occE = (H - hM) / max(uRidge.z * sqrt(-log(max(hN, 1e-3))), 1.), rE = mix(R0.y / max(length(R0.xz), 1e-3), R.y / max(length(R.xz), 1e-3), 0.5);
+      sky = mix(body * 1.3, sky, max(smoothstep(occE - 0.05, occE + 0.05, rE), smoothstep(0.9, 1., hN)));
+      // light through the thinning lip: the sky behind the wall, filtered green-grey by the water
+      vec3 behind = textureLod(uSkyCube, normalize(vec3(V.x, 0.08, V.z)), 3.).rgb;
+      float thin = pow(smoothstep(0.6, 0.995, hN), 2.) * (0.7 + 0.6 * rel.z);
+      body += behind * vec3(0.10, 0.30, 0.26) * thin;
+      vec3 col = mix(body, sky, F);
+      // foam: aerated streaks (metric), spilling at the crest, churn at the foot; mean coverage where sub-pixel
+      float fk = 1. - smoothstep(0.4, 0.9, fx / 12.);
+      float fn = fbm(vec2(x / 45., v / 220.) + rel.z * 0.8 + vec2(0.4, 0.) * fbm(vec2(x / 12., v / 60.)));
+      float streak = mix(0.1, smoothstep(0.55, 0.85, fn), fk);
+      float crest = smoothstep(H - 18. - 0.05*H, H - 2., hM) * mix(0.6, smoothstep(0.35, 0.6, fbm(vec2(x / 14., (hM - uT*6.) / 10.))), fk);
+      float churn = 0.55 * (1. - smoothstep(4., 40. + 0.04*H, hM)) * mix(0.4, smoothstep(0.35, 0.6, fbm(vec2(x / 18., (hM + uT*3.) / 7.) + 2.3)), fk);
+      float foam = clamp(streak * smoothstep(0.1, 0.5, hN) * 0.4 + crest + churn, 0., 1.) * mix(0.6, 1., det);
+      vec3 Nf = normalize(N + 0.35 * vec3(rel.x, 0., rel.y));
+      vec3 foamCol = 0.6 * (1.1 * max(dot(Nf, sunDirection), 0.) * sunColor + 0.5 * amb);
+      col = mix(col, foamCol, foam);
       foamOut = foam;
-      vec3 foamCol = vec3(0.70, 0.67, 0.66) * (0.3 + 0.7*sunColor) * (0.75 + 0.35*f3);
-      return mix(col, foamCol, foam);
+      // aerial perspective: extinction toward the horizon sky in this direction
+      vec3 haze = textureLod(uSkyCube, normalize(vec3(V.x, 0.015, V.z)), 2.).rgb;
+      return mix(haze, col, exp(-dist / uHazeL));
     }`;
 
   // the sea: three's Water (planar mirror) with its shaders rewritten around the FFT ocean (_ocean.js):
@@ -208,7 +250,7 @@
       uS0: { value: O.slope[0] }, uS1: { value: O.slope[1] }, uS2: { value: O.slope[2] }, uOL: { value: new THREE.Vector3(...O.L) },
       uSubVar: { value: 0.0006 }, uTanH: { value: 0.3 }, uAspect: { value: 16 / 9 }, uMirrorW: { value: 1920 }, uRSign: { value: 1 },
       uAbsorb: { value: new THREE.Vector3(0.62, 0.22, 0.2) }, uDeep: { value: new THREE.Color(0x0a1c26) }, uSSS: { value: new THREE.Color(0x0f3a36) },
-      uHs: { value: Math.max(O.hs, 0.1) }, uSand: { value: new THREE.Color(0.47, 0.40, 0.32).multiplyScalar(0.35) } });
+      uHs: { value: Math.max(O.hs, 0.1) }, uSkyCube: { value: null }, uHazeL: { value: 24000 }, uSand: { value: new THREE.Color(0.47, 0.40, 0.32).multiplyScalar(0.35) } });
     const DISP = /* glsl */`
       uniform sampler2D uD0, uD1, uD2, uS0, uS1, uS2; uniform vec3 uOL;
       float shoal(float still){ return smoothstep(0.05, 1.6, still); }      // waves die out toward the waterline`;
@@ -247,7 +289,7 @@
         // ridge slope (analytic, along z)
         float rwf = worldPosition.z > uRidge.x ? uRidge.z : uRidge.z * 4.;
         float rz = (worldPosition.z - uRidge.x) / rwf;
-        sl.y += uRidge.y * exp(-rz*rz) * (-2.*rz / rwf);
+        float slR = uRidge.y * exp(-rz*rz) * (-2.*rz / rwf); sl.y += slR;
         vec3 surfaceNormal = normalize(vec3(-sl.x, 1., -sl.y));
         // ---- reflection: taps across the sub-pixel slope distribution along the view direction ----
         vec3 V = -eyeDirection; vec2 fw = normalize(V.xz + vec2(1e-6)), sd = vec2(-fw.y, fw.x);
@@ -293,8 +335,12 @@
         float reflElevD = reflElev + 2. * sF + tearN * 0.014;
         float hRef = clamp((reflElevD * distR + worldPosition.y) / max(uRidge.y, 1.0), 0., 1.);
         float xWall = eye.x + vd.x * (eye.z - uRidge.x) / max(-vd.z, 1.);             // where the reflected ray meets the wall
-        float fR; vec3 ridgeCol = faceShade(xWall + surfaceNormal.x*40. + tearX*60., hRef, 0., fR);
-        ridgeCol *= 0.7;
+        // the wall as the sea mirrors it: same shading seen from the mirrored eye, soft (coarse octaves only)
+        float fR, sR = 2. * hRef * sqrt(-log(max(hRef, 1e-3))) * uRidge.y / uRidge.z;   // front-profile slope at that height
+        vec3 Pw = vec3(xWall, uLevel + hRef * uRidge.y, uRidge.x), Em = normalize(vec3(eye.x, 2.*uLevel - eye.y, eye.z) - Pw);   // toward the mirrored eye
+        vec3 ridgeCol = wallShade(Pw, xWall + surfaceNormal.x*40. + tearX*60., hRef * uRidge.y, uRidge.y, normalize(vec3(0., 1., sR)),
+                                  Em, 30. + fwidth(xWall), 60., 0., fR);
+        ridgeCol *= 0.8;
         float occ = hasR * smoothstep(-0.0012, 0.0012, ridgeElev - reflElevD);
         float over = reflElevD - ridgeElev;
         float sprayR = hasR * (1. - occ) * exp(-max(over, 0.) / 0.005)
@@ -302,9 +348,9 @@
         outgoingLight = mix(outgoingLight, vec3(0.55, 0.52, 0.55)*(0.5 + 0.5*sunColor), sprayR*0.45);
         outgoingLight = mix(outgoingLight, mix(outgoingLight*0.15, ridgeCol, 0.92), occ);
         float hN = clamp(vH / max(uRidge.y, 1.0), 0., 1.) * hasR;
-        float fF; vec3 face = faceShade(worldPosition.x + (worldPosition.z - uRidge.x) * uRidge.w, hN, 1., fF);   // w: skew so streaks run down the screen
-        float hz = 1. - exp(-length(vd) / 18000.);
-        face = mix(face, vec3(0.42, 0.36, 0.42), hz*0.3);
+        float xF = worldPosition.x + (worldPosition.z - uRidge.x) * uRidge.w;           // w: skew so streaks run down the screen
+        float hM = hN * uRidge.y, fF;
+        vec3 face = hN > 0.005 ? wallShade(worldPosition.xyz, xF, hM, uRidge.y, normalize(vec3(0., 1., -slR)), eyeDirection, fwidth(xF), fwidth(hM), 1., fF) : vec3(0.);
         float faceK = smoothstep(0.015, 0.1, hN);
         outgoingLight = mix(outgoingLight, face, faceK); a = max(a, faceK);
         // ---- shore: foam line + lace + a spilling break ----
@@ -488,14 +534,17 @@
     // environment from the sky for wet-sand reflections (once)
     const pm = new THREE.PMREMGenerator(renderer), skyScene = new THREE.Scene(); const sky2 = new Sky(); sky2.scale.setScalar(1000);
     Object.keys(su).forEach((k) => { if (sky2.material.uniforms[k]) sky2.material.uniforms[k].value = su[k].value?.clone ? su[k].value.clone() : su[k].value; });
-    skyScene.add(sky2); scene.environment = pm.fromScene(skyScene).texture; scene.environmentIntensity = o.envI ?? 0.5;
+    skyScene.add(sky2); scene.environment = pm.fromScene(skyScene).texture;
+    // the same sky as a plain cube (linear HDR, mipmapped) for the wall face's reflection and aerial haze
+    const cubeRT = new THREE.WebGLCubeRenderTarget(128, { type: THREE.HalfFloatType, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter });
+    new THREE.CubeCamera(1, 5000, cubeRT).update(renderer, skyScene); scene.environmentIntensity = o.envI ?? 0.5;
     const sun = new THREE.DirectionalLight(0xffb98a, o.sunI ?? 3.2); sun.position.copy(sunDir).multiplyScalar(100);
     const hemi = new THREE.HemisphereLight(0x8fa3c4, 0x3a2f26, o.hemiI ?? 0.35);
     scene.add(sun, hemi);
     const sand = makeSand(E, o.prints); scene.add(sand);
     // dusk calm: light air over a long swell from slightly left of straight inshore (glassy enough to mirror the planet)
     const ocean = OCEAN.make(E, Object.assign({ wind: 2.2, fetch: 2e4, dir: 0.15, spread: 5, chop: 0.9, damp: 2.5,
-      swell: { hs: 0.45, len: 55, dir: -0.08, spread: 0.12 } }, o.ocean)); const water = makeWater(E, sunDir, ocean); scene.add(water);
+      swell: { hs: 0.45, len: 55, dir: -0.08, spread: 0.12 } }, o.ocean)); const water = makeWater(E, sunDir, ocean); scene.add(water); water.material.uniforms.uSkyCube.value = cubeRT.texture;
     const spray = makeSpray(E); scene.add(spray);
     const planet = makePlanet(E, o.kind ?? 'giant'); planet.material.uniforms.uSun.value.copy(sunDir); scene.add(planet);
     planet.rotation.set(0.08, 0.4, -0.12);
