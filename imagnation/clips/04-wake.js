@@ -8,8 +8,8 @@ window.CLIP = {
   uses: ['_ocean', '_world'],
   vignette: 0.45, grain: 0.05,
   glyphs: '巨物木星质量行星距离地球离最近时的潮高一千米洛希极限梦中数秒真实需要天',
-  // sound draft (Sprint 5): the first sound after the silence is one soft wave (J-cut under the black), a held note
-  sfxDraft: [[-0.4, 'wave', { v: 0.7 }], [1.2, 'note', { d: 4.6 }]],
+  // sound (audio/music.mjs): the first sound after the silence is one soft wave (J-cut under the black), a held note
+  sfx: [[-0.4, 'wave', { v: 0.7 }], [1.2, 'note', { d: 4.6 }]],
   setup(E) { this.w = WORLD.build(E, { sunAz: 20, kind: 'moon' }); },
   draw(t, E) {
     const { cam } = E, W = WORLD, w = this.w;
