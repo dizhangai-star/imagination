@@ -315,7 +315,7 @@
       uS0: { value: O.slope[0] }, uS1: { value: O.slope[1] }, uS2: { value: O.slope[2] }, uOL: { value: new THREE.Vector3(...O.L) },
       uSubVar: { value: 0.0006 }, uTanH: { value: 0.3 }, uAspect: { value: 16 / 9 }, uMirrorW: { value: 1920 }, uRSign: { value: 1 },
       uAbsorb: { value: new THREE.Vector3(0.62, 0.22, 0.2) }, uDeep: { value: new THREE.Color(0x0a1c26) }, uSSS: { value: new THREE.Color(0x0f3a36) },
-      uHs: { value: Math.max(O.hs, 0.1) }, uSkyCube: { value: null }, uHazeL: { value: 24000 }, uSand: { value: new THREE.Color(0.47, 0.40, 0.32).multiplyScalar(0.35) } });
+      uHs: { value: Math.max(O.hs, 0.1) }, uSkyCube: { value: null }, uHazeL: { value: 24000 }, uSprayA: { value: 0 }, uSand: { value: new THREE.Color(0.47, 0.40, 0.32).multiplyScalar(0.35) } });
     const DISP = /* glsl */`
       uniform sampler2D uD0, uD1, uD2, uS0, uS1, uS2; uniform vec3 uOL;
       float shoal(float still){ return smoothstep(0.05, 1.6, still); }      // waves die out toward the waterline`;
@@ -335,7 +335,7 @@
          vec4 mvPosition = modelViewMatrix * vec4(pd, 1.0); gl_Position = projectionMatrix * mvPosition;`);
     m.fragmentShader = m.fragmentShader
       .replace('varying vec4 worldPosition;', `varying vec4 worldPosition; varying float vH, vFH; varying vec2 vXZ;
-        uniform float uT, uSlope, uFoam, uLevel, uSurge, uSubVar, uTanH, uAspect, uMirrorW, uRSign, uHs; uniform vec4 uRidge;
+        uniform float uSprayA, uT, uSlope, uFoam, uLevel, uSurge, uSubVar, uTanH, uAspect, uMirrorW, uRSign, uHs; uniform vec4 uRidge;
         uniform vec3 uAbsorb, uDeep, uSSS, uSand; ${NOISE} ${SWASH} ${FACE} ${DISP}`)
       .replace(/void main\(\) \{[\s\S]*$/, `void main() {
         #include <logdepthbuf_fragment>
@@ -393,7 +393,7 @@
         float tearN = (fbm(worldPosition.xz * vec2(0.08, 0.15) + vec2(0., uT*0.3)) - 0.5) * aaT
                     + (fbm(worldPosition.xz * vec2(0.01, 0.02) + vec2(4.1, uT*0.05)) - 0.5) * aaL;
         float tearX = (fbm(worldPosition.xz * vec2(0.03, 0.25) + vec2(2.7, -uT*0.3)) - 0.5) * aaT;
-        float reflElevD = reflElev + 2. * sF + tearN * 0.014;
+        float reflElevD = reflElev + 2. * sF + tearN * 0.014 * clamp(uRidge.y / max(distR, 1.) / 0.02, 0., 1.);   // tear ∝ the ridge's size (no flecks off a low one)
         float hRef = clamp((reflElevD * distR + worldPosition.y) / max(uRidge.y, 1.0), 0., 1.);
         float xWall = eye.x + vd.x * (eye.z - uRidge.x) / max(-vd.z, 1.);             // where the reflected ray meets the wall
         // the wall as the sea mirrors it: same shading seen from the mirrored eye, soft (coarse octaves only)
@@ -404,7 +404,8 @@
         ridgeCol *= 0.8;
         float occ = hasR * smoothstep(-0.0012, 0.0012, ridgeElev - reflElevD);
         float over = reflElevD - ridgeElev;
-        float sprayR = hasR * (1. - occ) * exp(-max(over, 0.) / 0.005)
+        // the crest spray above it: as much as there is (uSprayA), as tall as it is (≈ 0.4 H, seen from here)
+        float sprayR = hasR * uSprayA * (1. - occ) * exp(-max(over, 0.) / max(0.4 * uRidge.y / max(distR, 1.), 1e-5))
                      * (0.35 + 0.65*smoothstep(0.3, 0.7, fbm(vec2(worldPosition.x*0.0035 - uT*0.02, over*300. - uT*0.35))));
         outgoingLight = mix(outgoingLight, vec3(0.55, 0.52, 0.55)*(0.5 + 0.5*sunColor), sprayR*0.45);
         outgoingLight = mix(outgoingLight, mix(outgoingLight*0.15, ridgeCol, 0.92), occ);
@@ -693,7 +694,7 @@
     sp.visible = H > 5 && (s.spray ?? 1) > 0;
     sp.position.set(0, (s.level ?? 0) + H * 0.5, (s.ridgeZ ?? -9e4) + (s.ridgeW ?? 1500));
     sp.scale.set(60000, H * 1.3, 1);
-    su.uT.value = s.t; su.uA.value = Math.min(1, H / 120) * (s.spray ?? 1); su.uLevel.value = s.level ?? 0; su.uRidge.value.copy(u.uRidge.value);
+    su.uT.value = s.t; su.uA.value = sp.visible ? Math.min(1, H / 120) * (s.spray ?? 1) : 0; u.uSprayA.value = su.uA.value; su.uLevel.value = s.level ?? 0; su.uRidge.value.copy(u.uRidge.value);
     w.sand.userData.U.uLevel.value = s.level ?? 0; w.sand.userData.U.uWet.value = s.wet ?? 0.14; w.sand.userData.U.uT.value = s.t;
     w.sky.material.uniforms.time.value = s.t;
     w.planet.material.uniforms.uLevel.value = (s.level ?? 0) + (s.ridgeH ?? 0) * 0;

@@ -172,6 +172,10 @@ reference: the Miller's-planet wave in *Interstellar* — learn the haze/scale, 
   (2) The sea's mirror pass renders nested INSIDE the main render, so per-camera switches belong in the object's own
   `onBeforeRender`, not `scene.onBeforeRender`. The spray is off in the mirror pass (`uOn`). (3) At samples 16 the frame
   came out white (empty canvas) until the spray's output was guarded against NaN/Inf (`discard`); 8 and 12 worked.
+- Sea at film 16–17 s (user, 2026-09-29): the faked spray reflection `sprayR` switched on at full strength as soon as
+  the ridge passed 1 m (`hasR`), over a fixed 0.005 rad band — i.e. most of the visible sea from 1.4 m up — so the sea
+  went pale and the planet's reflection vanished at 03 1.6 s. Now scaled by the spray amount (`uSprayA`) and by the
+  spray's angular height (0.4 H / distance); the reflection tear is scaled by the ridge's angular size.
 - Camera-dependent uniforms (`uTanH`, `uAspect`, wall `uX`) are set per render from the camera actually used, not in
   `update` — the clips set the camera after `update`, so these lagged one frame (01/02 zoom).
 - Numeric checks of GPU passes: open the clip in puppeteer and `readRenderTargetPixels` (`OCEAN.make(...).readRaw(t, c)`).
